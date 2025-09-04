@@ -6,8 +6,6 @@ This library provides an implementation for the simulation, analysis, and statis
 
 The software is designed for reproducible computational experiments. It includes a flexible simulation environment with multiple backends, analytical solvers based on probability generating functions (PGFs), mean-field approximations for network-based cascades, and a statistical inference module for fitting model parameters to empirical data.
 
-## Scientific context and utility
-
 The primary utility of this library is its precise and efficient implementation of a model that can generate cascades with non-universal, tunable power-law exponents. This capability directly addresses a significant gap between the predictions of classic cascade models, which typically exhibit universal scaling exponents (e.g., τ = 3/2), and the diverse scaling behavior observed in empirical data, particularly from social media platforms. The library is therefore a tool for investigating phenomena where this "extended criticality" (critical-like behavior over a range of parameters) is hypothesized to play a role. Its intended users include computational social scientists, physicists studying critical phenomena, and researchers modeling the spread of information, culture, or innovation.
 
 ## Installation and build requirements
