@@ -1,0 +1,25 @@
+experiment:
+  task: parameter_sweep 
+
+  distribution:
+    name: Poisson
+    params:
+      ell: 3.0
+      
+  dynamics:
+    name: standard
+    params: {}
+
+  backend: cpp
+
+  sweep_params:
+    p: [0.01, 0.02, 0.0286, 0.04, 0.05, 0.06]
+  
+  run_settings:
+    num_simulations: 100000
+    num_cores: 8
+
+output:
+  directory: "results/sweep_experiment_cpp"
+  results_file: "sweep_data.csv"
+  generate_plots: true

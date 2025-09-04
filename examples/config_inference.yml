@@ -1,0 +1,24 @@
+experiment:
+  task: fit_mcmc # or 'fit_mle'
+
+  data_path: "examples/sample_data.txt" 
+  
+  distribution:
+    name: Poisson
+  dynamics:
+    name: standard
+  backend: cpp
+
+  mle_settings:
+    initial_guess: [0.02, 3.0]
+    n_sim_per_step: 2000
+
+  mcmc_settings:
+    n_walkers: 32
+    n_steps: 1000
+    n_sim_per_step: 500
+
+output:
+  directory: "results/inference_run_mcmc"
+  results_file: "mcmc_results.nc"
+  generate_plots: true
