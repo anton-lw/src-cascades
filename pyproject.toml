@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "pybind11>=2.10"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -24,15 +24,24 @@ dependencies = [
     "sympy>=1.9",
     "pyyaml>=6.0",
     "scipy>=1.8",
+]
+
+[project.optional-dependencies]
+inference = [
     "emcee>=3.1",
     "arviz>=0.12",
+]
+cpp = [
+    "pybind11>=2.10",
+]
+all = [
+    "emcee>=3.1",
+    "arviz>=0.12",
+    "pybind11>=2.10",
 ]
 
 [project.urls]
 Homepage = "https://github.com/anton-lw/src-cascades-project"
-
-[tool.setuptools]
-py-modules = ["src_cascades.simulator_backend_cpp"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

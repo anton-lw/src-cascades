@@ -1,11 +1,20 @@
 import numpy as np
 from scipy.optimize import minimize
 from scipy.stats import nbinom
-import emcee
-import arviz as az
 from typing import List, Dict, Any
 from .simulator import SRCSimulator
 from .distributions import Poisson
+from .dynamics import standard_intensity_dynamics, saturating_intensity_dynamics
+
+def _create_dynamics_from_config(config: Dict[str, Any]):
+    dynamics_config = config.get("dynamics", {"name": "standard", "params": {}})
+    name = dynamics_config.get("name", "standard")
+    params = dynamics_config.get("params", {})
+    if name == "standard":
+        return standard_intensity_dynamics
+    if name == "saturating":
+        return saturating_intensity_dynamics(**params)
+    raise ValueError(f"Unsupported dynamics for inference: {name}")
 
 class Fitter:
     """A class to fit SRC model parameters to empirical cascade size data."""
@@ -21,11 +30,16 @@ class Fitter:
         self.simulator = self._create_simulator_from_config(config)
 
     def _create_simulator_from_config(self, config):
-        dist = Poisson(ell=config.get('ell', 3.0))
+        distribution_config = config.get("distribution", {"name": "Poisson", "params": {}})
+        if distribution_config.get("name", "Poisson") != "Poisson":
+            raise NotImplementedError("Inference currently supports only the Poisson branching distribution.")
+        dist_params = distribution_config.get("params", {})
+        dist = Poisson(ell=dist_params.get("ell", config.get('ell', 3.0)))
         return SRCSimulator(
             p=config.get('p', 0.01),
             distribution=dist,
-            backend=config.get('backend', 'cpp')
+            dynamics=_create_dynamics_from_config(config),
+            backend=config.get('backend', 'python')
         )
 
     def _log_likelihood(self, params: np.ndarray, n_sim: int) -> float:
@@ -73,12 +87,20 @@ class Fitter:
             "optimizer_result": result
         }
 
-    def fit_mcmc(self, n_walkers: int, n_steps: int, n_sim_per_step: int = 500) -> az.InferenceData:
+    def fit_mcmc(self, n_walkers: int, n_steps: int, n_sim_per_step: int = 500):
         """Fit model parameters using Markov Chain Monte Carlo (MCMC)."""
+        try:
+            import emcee
+            import arviz as az
+        except ImportError as exc:
+            raise ImportError(
+                "fit_mcmc requires the optional inference dependencies. "
+                "Install the 'inference' extra to enable it."
+            ) from exc
+
         log_prob_fn = lambda params: self._log_likelihood(params, n_sim_per_step)
-        
-        initial_state = np.random.rand(n_walkers, 2)
-        initial_state[:, 1] *= 5 # Scale ell initial guess
+
+        initial_state = self._initialize_mcmc_walkers(n_walkers, log_prob_fn)
         n_dims = initial_state.shape[1]
 
         sampler = emcee.EnsembleSampler(n_walkers, n_dims, log_prob_fn)
@@ -86,3 +108,24 @@ class Fitter:
         
         inference_data = az.from_emcee(sampler)
         return inference_data
+
+    def _initialize_mcmc_walkers(self, n_walkers: int, log_prob_fn) -> np.ndarray:
+        """Sample walker positions from a conservative finite-likelihood region."""
+        walkers = []
+        rng = np.random.default_rng()
+        max_attempts = max(200, n_walkers * 200)
+
+        for _ in range(max_attempts):
+            candidate = np.array([
+                rng.uniform(0.01, 0.3),
+                rng.uniform(0.5, 5.0),
+            ])
+            if np.isfinite(log_prob_fn(candidate)):
+                walkers.append(candidate)
+                if len(walkers) == n_walkers:
+                    return np.array(walkers)
+
+        raise RuntimeError(
+            "Unable to find valid initial walker positions for MCMC. "
+            "Try increasing n_sim_per_step or adjusting the model/data configuration."
+        )

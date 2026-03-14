@@ -1,0 +1,131 @@
+import numpy as np
+from scipy.optimize import minimize
+from scipy.stats import nbinom
+from typing import List, Dict, Any
+from .simulator import SRCSimulator
+from .distributions import Poisson
+from .dynamics import standard_intensity_dynamics, saturating_intensity_dynamics
+
+def _create_dynamics_from_config(config: Dict[str, Any]):
+    dynamics_config = config.get("dynamics", {"name": "standard", "params": {}})
+    name = dynamics_config.get("name", "standard")
+    params = dynamics_config.get("params", {})
+    if name == "standard":
+        return standard_intensity_dynamics
+    if name == "saturating":
+        return saturating_intensity_dynamics(**params)
+    raise ValueError(f"Unsupported dynamics for inference: {name}")
+
+class Fitter:
+    """A class to fit SRC model parameters to empirical cascade size data."""
+
+    def __init__(self, data: List[int], config: Dict[str, Any]):
+        """
+        Args:
+            data (List[int]): A list of observed cascade sizes.
+            config (Dict): A configuration dictionary specifying the model to fit.
+        """
+        self.data = np.array(data)
+        self.config = config
+        self.simulator = self._create_simulator_from_config(config)
+
+    def _create_simulator_from_config(self, config):
+        distribution_config = config.get("distribution", {"name": "Poisson", "params": {}})
+        if distribution_config.get("name", "Poisson") != "Poisson":
+            raise NotImplementedError("Inference currently supports only the Poisson branching distribution.")
+        dist_params = distribution_config.get("params", {})
+        dist = Poisson(ell=dist_params.get("ell", config.get('ell', 3.0)))
+        return SRCSimulator(
+            p=config.get('p', 0.01),
+            distribution=dist,
+            dynamics=_create_dynamics_from_config(config),
+            backend=config.get('backend', 'python')
+        )
+
+    def _log_likelihood(self, params: np.ndarray, n_sim: int) -> float:
+        """Calculate the log-likelihood of the data given model parameters."""
+        p, ell = params
+        if not (0 < p < 1 and 0 < ell < 15): # Priors/bounds
+            return -np.inf
+
+        self.simulator.p = p
+        self.simulator.distribution.ell = ell
+        
+        sim_results = self.simulator.run_simulations(num_simulations=n_sim, num_cores=1)
+        sim_sizes = sim_results.cascade_sizes
+        
+        if len(sim_sizes[sim_sizes > 0]) < 2: return -np.inf
+        
+        mean_sim = np.mean(sim_sizes)
+        var_sim = np.var(sim_sizes)
+        if var_sim <= mean_sim or mean_sim == 0: return -np.inf
+
+        size_param = mean_sim**2 / (var_sim - mean_sim)
+        prob_param = size_param / (size_param + mean_sim)
+        
+        log_lik = np.sum(nbinom.logpmf(self.data, n=size_param, p=prob_param))
+        return log_lik if np.isfinite(log_lik) else -np.inf
+
+    def fit_mle(self, initial_guess: List[float], n_sim_per_step: int = 1000) -> Dict:
+        """Find the Maximum Likelihood Estimate (MLE) for model parameters."""
+        neg_log_lik = lambda params: -self._log_likelihood(params, n_sim_per_step)
+        
+        result = minimize(
+            neg_log_lik, x0=np.array(initial_guess),
+            method='Nelder-Mead', options={'maxiter': 50, 'adaptive': True}
+        )
+
+        log_lik_final = -result.fun
+        k = len(initial_guess)
+        n = len(self.data)
+        aic = 2 * k - 2 * log_lik_final
+        bic = np.log(n) * k - 2 * log_lik_final
+
+        return {
+            "mle_params": {"p": result.x[0], "ell": result.x[1]},
+            "log_likelihood": log_lik_final, "AIC": aic, "BIC": bic,
+            "optimizer_result": result
+        }
+
+    def fit_mcmc(self, n_walkers: int, n_steps: int, n_sim_per_step: int = 500):
+        """Fit model parameters using Markov Chain Monte Carlo (MCMC)."""
+        try:
+            import emcee
+            import arviz as az
+        except ImportError as exc:
+            raise ImportError(
+                "fit_mcmc requires the optional inference dependencies. "
+                "Install the 'inference' extra to enable it."
+            ) from exc
+
+        log_prob_fn = lambda params: self._log_likelihood(params, n_sim_per_step)
+
+        initial_state = self._initialize_mcmc_walkers(n_walkers, log_prob_fn)
+        n_dims = initial_state.shape[1]
+
+        sampler = emcee.EnsembleSampler(n_walkers, n_dims, log_prob_fn)
+        sampler.run_mcmc(initial_state, n_steps, progress=True)
+        
+        inference_data = az.from_emcee(sampler)
+        return inference_data
+
+    def _initialize_mcmc_walkers(self, n_walkers: int, log_prob_fn) -> np.ndarray:
+        """Sample walker positions from a conservative finite-likelihood region."""
+        walkers = []
+        rng = np.random.default_rng()
+        max_attempts = max(200, n_walkers * 200)
+
+        for _ in range(max_attempts):
+            candidate = np.array([
+                rng.uniform(0.01, 0.3),
+                rng.uniform(0.5, 5.0),
+            ])
+            if np.isfinite(log_prob_fn(candidate)):
+                walkers.append(candidate)
+                if len(walkers) == n_walkers:
+                    return np.array(walkers)
+
+        raise RuntimeError(
+            "Unable to find valid initial walker positions for MCMC. "
+            "Try increasing n_sim_per_step or adjusting the model/data configuration."
+        )

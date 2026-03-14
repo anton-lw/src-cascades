@@ -4,7 +4,6 @@
 #include <vector>
 #include <deque>
 #include <random>
-#include <functional>
 #include <map>
 #include <string>
 
@@ -17,19 +16,14 @@ struct CascadeMetricsResult {
     std::map<int, std::vector<int>> temporal_history;
 };
 
-// C++ template for the cascade simulator.
-// It is templated on the intensity dynamics function type.
-template<typename DynamicsFunc>
 CascadeMetricsResult run_cascade_cpp(
     double p,
     double ell, // Assuming Poisson for speed
     int initial_intensity,
     bool record_history,
-    int max_steps,
-    DynamicsFunc dynamics,
-    const std::function<bool(int)>& termination_condition
+    int max_steps
 ) {
-    if (termination_condition(initial_intensity)) {
+    if (initial_intensity <= 0) {
         return {0, 0, 0, 0.0, {}};
     }
 
@@ -59,6 +53,9 @@ CascadeMetricsResult run_cascade_cpp(
         }
 
         for (int i = 0; i < gen_width; ++i) {
+            if (total_size >= max_steps) {
+                break;
+            }
             int current_intensity = current_gen_q.front();
             current_gen_q.pop_front();
 
@@ -68,9 +65,9 @@ CascadeMetricsResult run_cascade_cpp(
             int num_children = poisson_dist(rng);
             for (int j = 0; j < num_children; ++j) {
                 bool is_receptive = uniform_dist(rng) < p;
-                int new_intensity = dynamics(current_intensity, is_receptive);
+                int new_intensity = is_receptive ? current_intensity + 1 : current_intensity - 1;
 
-                if (!termination_condition(new_intensity)) {
+                if (new_intensity > 0) {
                     next_gen_q.push_back(new_intensity);
                 }
             }

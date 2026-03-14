@@ -1,9 +1,11 @@
 import numpy as np
 import networkx as nx
+import pickle
+import warnings
 from collections import deque
 from multiprocessing import Pool, cpu_count
 from typing import Callable, Optional, Any, List
-from . import distributions, dynamics
+from . import distributions, dynamics as dynamics_module
 from .results import SimulationResult, CascadeMetrics
 
 try:
@@ -11,11 +13,29 @@ try:
     CPP_AVAILABLE = True
 except ImportError:
     CPP_AVAILABLE = False
-    print("Warning: C++ backend not found. Falling back to pure Python.")
+
+def default_termination_condition(k: int) -> bool:
+    return k <= 0
+
+def _callable_name(func: Callable[..., Any]) -> str:
+    return getattr(func, "__name__", getattr(func, "name", func.__class__.__name__))
+
+def _prepare_rngs_for_run(simulator_instance: "SRCSimulator") -> None:
+    simulator_instance.rng = np.random.default_rng()
+    if hasattr(simulator_instance.distribution, "rng"):
+        simulator_instance.distribution.rng = np.random.default_rng()
+
+def _is_pickle_safe(obj: Any) -> bool:
+    try:
+        pickle.dumps(obj)
+    except Exception:
+        return False
+    return True
 
 def _run_single_cascade_wrapper(args):
     """Helper for multiprocessing to call instance methods."""
     simulator_instance, kwargs = args
+    _prepare_rngs_for_run(simulator_instance)
     return simulator_instance.run_cascade(**kwargs)
 
 class SRCSimulator:
@@ -23,8 +43,8 @@ class SRCSimulator:
     def __init__(self,
                  p: float,
                  distribution: distributions.BranchingDistribution,
-                 dynamics: dynamics.IntensityDynamics = dynamics.standard_intensity_dynamics,
-                 termination_condition: Callable[[int], bool] = lambda k: k <= 0,
+                 dynamics: dynamics_module.IntensityDynamics = dynamics_module.standard_intensity_dynamics,
+                 termination_condition: Callable[[int], bool] = default_termination_condition,
                  backend: str = 'python'):
         self.p = p
         self.distribution = distribution
@@ -37,6 +57,10 @@ class SRCSimulator:
                 raise ImportError("C++ backend selected, but compiled module is not available.")
             if not isinstance(self.distribution, distributions.Poisson):
                 raise ValueError("C++ backend currently only supports Poisson distribution.")
+            if self.dynamics is not dynamics_module.standard_intensity_dynamics:
+                raise ValueError("C++ backend currently only supports the standard intensity dynamics.")
+            if self.termination_condition is not default_termination_condition:
+                raise ValueError("C++ backend currently only supports the default termination condition.")
         self.backend = backend
 
     def _run_cascade_python(self, initial_intensity: int, record_history: bool, max_steps: int) -> CascadeMetrics:
@@ -56,6 +80,8 @@ class SRCSimulator:
                 history[depth] = {'nodes': gen_width, 'intensities': list(current_gen_q)}
 
             for _ in range(gen_width):
+                if total_size >= max_steps:
+                    break
                 current_intensity = current_gen_q.popleft()
                 total_size += 1
                 total_intensity_effort += current_intensity
@@ -80,7 +106,7 @@ class SRCSimulator:
         """Wrapper to call the compiled C++ function."""
         result_dict = simulator_backend_cpp.run_cascade_cpp(
             self.p, self.distribution.mean(), initial_intensity, 
-            record_history, max_steps, self.dynamics, self.termination_condition
+            record_history, max_steps
         )
         return CascadeMetrics(**result_dict)
 
@@ -99,15 +125,22 @@ class SRCSimulator:
         config = {
             "p": self.p, "distribution": self.distribution.__class__.__name__,
             "ell": self.distribution.mean() if isinstance(self.distribution, distributions.Poisson) else None,
-            "dynamics": self.dynamics.__name__, "num_simulations": num_simulations,
+            "dynamics": _callable_name(self.dynamics), "num_simulations": num_simulations,
             "backend": self.backend, **kwargs
         }
 
-        if num_cores > 1 and num_simulations > 1:
+        parallel_requested = num_cores > 1 and num_simulations > 1
+        if parallel_requested and _is_pickle_safe((self, kwargs)):
             with Pool(num_cores) as pool:
                 args_list = [(self, kwargs) for _ in range(num_simulations)]
                 metrics_list = pool.map(_run_single_cascade_wrapper, args_list)
         else:
+            if parallel_requested:
+                warnings.warn(
+                    "Falling back to serial execution because the simulator configuration is not pickle-safe.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
             metrics_list = [self.run_cascade(**kwargs) for _ in range(num_simulations)]
         
         return SimulationResult(configuration=config, run_metrics=metrics_list)
@@ -117,8 +150,8 @@ class NetworkSRCSimulator:
     def __init__(self,
                  graph: nx.Graph,
                  p: float,
-                 dynamics: dynamics.IntensityDynamics = dynamics.standard_intensity_dynamics,
-                 termination_condition: Callable[[int], bool] = lambda k: k <= 0):
+                 dynamics: dynamics_module.IntensityDynamics = dynamics_module.standard_intensity_dynamics,
+                 termination_condition: Callable[[int], bool] = default_termination_condition):
         self.graph = graph
         self.nodes = list(graph.nodes)
         self.p = p

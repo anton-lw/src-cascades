@@ -13,11 +13,11 @@ class PGFSolver:
         self.distribution = distribution
 
     def _solve_recursion(self, x_values, k_max, tolerance, max_iter):
-        """Internal method to run the iterative fixed-point solver."""
-        H = np.ones((k_max + 2, len(x_values)), dtype=np.complex128)
+        """Internal method to run the minimal fixed-point recursion."""
+        H = np.zeros((k_max + 2, len(x_values)), dtype=np.complex128)
         H[0, :] = 1.0
 
-        for i in range(max_iter):
+        for _ in range(max_iter):
             H_old = H.copy()
             H[k_max + 1, :] = H[k_max, :]
 
@@ -29,7 +29,11 @@ class PGFSolver:
             if error < tolerance:
                 return H
         
-        print(f"Warning: PGF solver did not converge within {max_iter} iterations. Final error: {error:.2e}")
+        warnings.warn(
+            f"PGF solver did not converge within {max_iter} iterations. Final error: {error:.2e}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return H
 
     def get_size_distribution(self, max_size: int = 2000, k_max: int = 100,
@@ -57,23 +61,22 @@ class PGFSolver:
         Calculates the expected cascade size for a given initial intensity, assuming
         the standard k -> k +/- 1 dynamics. Based on Eq. (3) from the paper.
         """
+        _ = k_max
         ell = self.distribution.mean()
         p = self.p
-        
-        if ell <= 1 and p < 1:
+
+        if initial_intensity <= 0:
+            return 0.0
+        if p <= 0:
             return (ell**initial_intensity - 1) / (ell - 1) if ell != 1 else float(initial_intensity)
+        if p >= 1:
+            return np.inf
+        if ell == 1:
+            return np.inf if p >= 0.5 else float(initial_intensity) / (1 - 2 * p)
 
         discriminant = 1 - 4 * p * (1 - p) * ell**2
         if discriminant < 0:
             return np.inf
 
-        term1 = 1 / (ell - 1) if ell != 1 else np.inf
-        if ell == 1: return float(initial_intensity)
-
-        term2_num = 1 - np.sqrt(discriminant)
-        term2_den = 2 * p * ell
-        
-        k_eff = min(initial_intensity, k_max)
-        term2 = (term2_num / term2_den)**k_eff
-        
-        return term1 * (1 - term2)
+        ratio = (1 - np.sqrt(discriminant)) / (2 * p * ell)
+        return (ratio**initial_intensity - 1) / (ell - 1)

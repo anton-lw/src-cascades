@@ -1,22 +1,33 @@
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
-import pybind11
+import warnings
+
+try:
+    import pybind11
+except ImportError:
+    pybind11 = None
 
 class get_pybind_include(object):
     """Helper class to defer importing pybind11 until it is actually installed."""
     def __str__(self):
+        if pybind11 is None:
+            raise RuntimeError("pybind11 is required to build the optional C++ backend.")
         return pybind11.get_include()
 
-ext_modules = [
-    Extension(
-        'src_cascades.simulator_backend_cpp',
-        ['src/src_cascades/core/simulator_backend.cpp'],
-        include_dirs=[
-            get_pybind_include(),
-        ],
-        language='c++'
-    ),
-]
+ext_modules = []
+if pybind11 is not None:
+    ext_modules = [
+        Extension(
+            'src_cascades.simulator_backend_cpp',
+            ['src/src_cascades/core/simulator_backend.cpp'],
+            include_dirs=[
+                get_pybind_include(),
+            ],
+            language='c++'
+        ),
+    ]
+else:
+    warnings.warn("pybind11 not found; skipping the optional C++ backend build.", RuntimeWarning)
 
 # As in https://pybind11.readthedocs.io/en/stable/compiling.html#automatic-unique-variable-names
 # for MSVC support

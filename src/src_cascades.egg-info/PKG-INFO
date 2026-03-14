@@ -1,0 +1,66 @@
+Metadata-Version: 2.1
+Name: src-cascades
+Version: 3.0.0
+Summary: A library for simulating, analyzing, and fitting self-reinforcing cascade models to data.
+Author: Anton L. Waagaard
+Project-URL: Homepage, https://github.com/anton-lw/src-cascades-project
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Scientific/Engineering
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.21
+Requires-Dist: networkx>=2.6
+Requires-Dist: pandas>=1.3
+Requires-Dist: matplotlib>=3.5
+Requires-Dist: sympy>=1.9
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: scipy>=1.8
+Provides-Extra: inference
+Requires-Dist: emcee>=3.1; extra == "inference"
+Requires-Dist: arviz>=0.12; extra == "inference"
+Provides-Extra: cpp
+Requires-Dist: pybind11>=2.10; extra == "cpp"
+Provides-Extra: all
+Requires-Dist: emcee>=3.1; extra == "all"
+Requires-Dist: arviz>=0.12; extra == "all"
+Requires-Dist: pybind11>=2.10; extra == "all"
+
+# src-cascades
+
+`src-cascades` is a Python library for simulating, analyzing, and fitting self-reinforcing cascade (SRC) models.
+
+## Installation
+
+Base install:
+
+```bash
+pip install .
+```
+
+Optional extras:
+
+```bash
+pip install .[inference]
+pip install .[cpp]
+pip install .[all]
+```
+
+The `inference` extra enables MCMC fitting and ArviZ plotting. The `cpp` extra installs the build dependency used by the optional PyBind11 backend.
+
+## Features
+
+- Branching-process SRC simulation in pure Python, with an optional C++ backend
+- PGF-based size-distribution and supercriticality calculations
+- Network-based SRC simulation on `networkx` graphs
+- YAML-driven experiment runner for simulation sweeps and inference
+
+## Development
+
+The project uses a `src/` layout. Tests can be run with:
+
+```bash
+pytest
+```

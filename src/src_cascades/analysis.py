@@ -1,28 +1,71 @@
+import math
 import pandas as pd
 import numpy as np
-import sympy as sp
 import itertools
 import networkx as nx
 from typing import Any, List, Dict, Callable
+from scipy.optimize import root_scalar
+
+def critical_point(ell: float) -> float:
+    """Critical point from Eq. (4) of the paper."""
+    if ell < 1:
+        return np.inf
+    return 0.5 * (1 - np.sqrt(1 - 1 / (ell**2)))
 
 def analyze_traveling_wave(p: float, ell: float) -> Dict[str, float]:
     """
-    Solves the transcendental equations for the traveling wave properties.
-    Based on Eqs. (7) and (9) of the paper.
+    Solves the traveling-wave quantities from Eqs. (6) and (10).
     """
-    pc_theory = 0.5 - np.sqrt(max(0, ell**2 - 1)) / (2 * ell) if ell >= 1 else np.inf
-    if p > pc_theory:
-        x = sp.symbols('x')
-        try:
-            mu_eqn = sp.log(ell * (1 - p) + ell * p * sp.exp(x)) - p * x * sp.exp(x) / (1 - p + p * sp.exp(x))
-            mu = float(sp.nsolve(mu_eqn, 3.0, solver='bisect', tol=1e-6))
-            v_max = p * np.exp(mu) / (1 - p + p * np.exp(mu))
-            n_c = (3.0 / mu) * (1 / (2.0 * v_max - 1)) if abs(2 * v_max - 1) > 1e-9 else np.inf
-            return {"mu": mu, "v_max": v_max, "n_c": n_c}
-        except (ValueError, TypeError):
-             return {"mu": np.nan, "v_max": np.nan, "n_c": np.nan}
-    else:
+    pc_theory = critical_point(ell)
+    if ell <= 0 or not (0 < p < 1) or p <= pc_theory:
         return {"mu": np.nan, "v_max": np.nan, "n_c": np.nan}
+
+    def velocity_selection(mu: float) -> float:
+        exp_mu = math.exp(mu)
+        denom = 1 - p + p * exp_mu
+        return math.log(ell * denom) - mu * (p * exp_mu / denom)
+
+    bracket = None
+    search_grid = np.concatenate([
+        np.linspace(1e-8, 1e-2, 250),
+        np.logspace(-2, 2, 400),
+    ])
+    prev_mu = float(search_grid[0])
+    prev_val = velocity_selection(prev_mu)
+    for mu in search_grid[1:]:
+        current_mu = float(mu)
+        current_val = velocity_selection(current_mu)
+        if prev_val == 0:
+            bracket = (prev_mu, prev_mu)
+            break
+        if current_val == 0 or prev_val * current_val < 0:
+            bracket = (prev_mu, current_mu)
+            break
+        prev_mu = current_mu
+        prev_val = current_val
+
+    if bracket is None:
+        return {"mu": np.nan, "v_max": np.nan, "n_c": np.nan}
+
+    try:
+        if bracket[0] == bracket[1]:
+            mu = bracket[0]
+        else:
+            solution = root_scalar(velocity_selection, bracket=bracket, method="brentq")
+            if not solution.converged:
+                return {"mu": np.nan, "v_max": np.nan, "n_c": np.nan}
+            mu = float(solution.root)
+    except ValueError:
+        return {"mu": np.nan, "v_max": np.nan, "n_c": np.nan}
+
+    exp_mu = math.exp(mu)
+    denom = 1 - p + p * exp_mu
+    v_max = math.log(ell * denom) / mu
+    if (2 * v_max) <= 1:
+        n_c = np.inf
+    else:
+        n_c = 3.0 / (mu * (2.0 * v_max - 1.0))
+    return {"mu": mu, "v_max": v_max, "n_c": n_c}
 
 def analyze_network_criticality(graph: nx.Graph, p: float) -> dict:
     """
